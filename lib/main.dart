@@ -1,23 +1,82 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Prefer color-emoji fonts so single-codepoint emoji (e.g. soccer ball U+26BD) render correctly.
+TextStyle emojiGlyphStyle(double fontSize, {double height = 1.0}) {
+  final String? emojiFont = switch (defaultTargetPlatform) {
+    TargetPlatform.windows => 'Segoe UI Emoji',
+    TargetPlatform.iOS || TargetPlatform.macOS => 'Apple Color Emoji',
+    _ => null,
+  };
+  return TextStyle(
+    fontSize: fontSize,
+    height: height,
+    fontFamily: emojiFont,
+    fontFamilyFallback: const [
+      'Noto Color Emoji',
+      'Segoe UI Emoji',
+      'Apple Color Emoji',
+      'Segoe UI Symbol',
+    ],
+  );
+}
 
 void main() {
   runApp(const LeftRightApp());
 }
 
-class LeftRightApp extends StatelessWidget {
+class LeftRightApp extends StatefulWidget {
   const LeftRightApp({super.key});
 
   @override
+  State<LeftRightApp> createState() => _LeftRightAppState();
+}
+
+class _LeftRightAppState extends State<LeftRightApp> {
+  int _themeIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final stats = await SessionStats.load();
+    if (!mounted) return;
+    setState(() {
+      _themeIndex =
+          min(max(0, stats.selectedThemeIndex), max(0, stats.unlockedThemes - 1));
+    });
+  }
+
+  void _onThemeChanged(int index) {
+    if (!mounted) return;
+    setState(() {
+      _themeIndex = index;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    final theme = AppThemes.all[_themeIndex.clamp(0, AppThemes.all.length - 1)];
+    final isDarkish = theme.background.first.computeLuminance() < 0.2;
+    return MaterialApp(
       title: 'LeftRight Rush',
       debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: theme.seedColor,
+          brightness: isDarkish ? Brightness.dark : Brightness.light,
+        ),
+        useMaterial3: true,
+      ),
+      home: HomeScreen(onThemeChanged: _onThemeChanged),
     );
   }
 }
@@ -28,69 +87,168 @@ class AppTheme {
     required this.icon,
     required this.seedColor,
     required this.background,
+    required this.effect,
   });
 
   final String name;
-  final String icon;
+  final IconData icon;
   final Color seedColor;
   final List<Color> background;
+  final ThemeVisualEffect effect;
+}
+
+enum ThemeVisualEffect {
+  none,
+  neonPulse,
+  starfield,
+  jungleDrift,
+  candyBubbles,
+  oceanWave,
+  sunsetOrbs,
+  galaxySpiral,
+  snowfall,
 }
 
 class AppThemes {
   static const List<AppTheme> all = [
     AppTheme(
+      name: 'Default',
+      icon: Icons.palette_outlined,
+      seedColor: Color(0xFF9CA3AF),
+      background: [Color(0xFFE4E4E7), Color(0xFFF4F4F5)],
+      effect: ThemeVisualEffect.none,
+    ),
+    AppTheme(
       name: 'Neon Pop',
-      icon: '⚡',
+      icon: Icons.flash_on_rounded,
       seedColor: Color(0xFF3B82F6),
       background: [Color(0xFFEEF2FF), Color(0xFFFFF1F2)],
+      effect: ThemeVisualEffect.neonPulse,
     ),
     AppTheme(
       name: 'Space',
-      icon: '🚀',
+      icon: Icons.rocket_launch_rounded,
       seedColor: Color(0xFF7C3AED),
       background: [Color(0xFF0B102A), Color(0xFF1B2A6B)],
+      effect: ThemeVisualEffect.starfield,
     ),
     AppTheme(
       name: 'Jungle',
-      icon: '🌿',
+      icon: Icons.park_rounded,
       seedColor: Color(0xFF16A34A),
       background: [Color(0xFFECFDF5), Color(0xFFD1FAE5)],
+      effect: ThemeVisualEffect.jungleDrift,
     ),
     AppTheme(
       name: 'Candy',
-      icon: '🍬',
+      icon: Icons.cake_rounded,
       seedColor: Color(0xFFEC4899),
       background: [Color(0xFFFFF1F2), Color(0xFFFFF7ED)],
+      effect: ThemeVisualEffect.candyBubbles,
     ),
     AppTheme(
       name: 'Ocean',
-      icon: '🌊',
+      icon: Icons.waves_rounded,
       seedColor: Color(0xFF06B6D4),
       background: [Color(0xFFE0F2FE), Color(0xFFECFEFF)],
+      effect: ThemeVisualEffect.oceanWave,
     ),
     AppTheme(
       name: 'Sunset',
-      icon: '🌅',
+      icon: Icons.wb_sunny_rounded,
       seedColor: Color(0xFFF97316),
       background: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+      effect: ThemeVisualEffect.sunsetOrbs,
     ),
     AppTheme(
       name: 'Galaxy Pink',
-      icon: '🪐',
+      icon: Icons.auto_awesome_rounded,
       seedColor: Color(0xFFDB2777),
       background: [Color(0xFF1F1147), Color(0xFF3A0A3A)],
+      effect: ThemeVisualEffect.galaxySpiral,
     ),
     AppTheme(
       name: 'Ice',
-      icon: '❄️',
+      icon: Icons.ac_unit_rounded,
       seedColor: Color(0xFF0EA5E9),
       background: [Color(0xFFEFF6FF), Color(0xFFE0F2FE)],
+      effect: ThemeVisualEffect.snowfall,
     ),
   ];
 }
 
+/// Home screen surfaces tinted from the active theme so **light** themes (Neon, Jungle, …)
+/// feel as “full-page” as dark themes (Space, Galaxy) instead of generic white cards.
+/// [Default] uses the same neutral styling as the old “plain” home.
+class HomeThemePalette {
+  HomeThemePalette(this.theme);
+
+  final AppTheme? theme;
+
+  bool get isPlain => theme == null || theme!.name == 'Default';
+
+  bool get isDark =>
+      theme != null && theme!.background.first.computeLuminance() < 0.22;
+
+  /// Play / Themes / Progress outer sections — translucent so theme gradient + floaties show through.
+  Color get sectionSheet {
+    if (isPlain) return Colors.white.withValues(alpha: 0.40);
+    if (isDark) return Colors.white.withValues(alpha: 0.12);
+    return Color.alphaBlend(
+      theme!.seedColor.withValues(alpha: 0.16),
+      Colors.white.withValues(alpha: 0.38),
+    );
+  }
+
+  /// Nested rows (mode cards inside Play)
+  Color get nestedSheet {
+    if (isPlain) return Colors.white.withValues(alpha: 0.32);
+    if (isDark) return Colors.white.withValues(alpha: 0.08);
+    return Color.alphaBlend(
+      theme!.seedColor.withValues(alpha: 0.12),
+      Colors.white.withValues(alpha: 0.30),
+    );
+  }
+
+  /// Frosted panel edge, consistent across light/dark themes.
+  BorderSide get panelBorder => BorderSide(
+        color: isPlain
+            ? Colors.black.withValues(alpha: 0.14)
+            : isDark
+                ? Colors.white.withValues(alpha: 0.32)
+                : Color.alphaBlend(
+                    seedOrNeutral.withValues(alpha: 0.42),
+                    Colors.black.withValues(alpha: 0.10),
+                  ),
+        width: 1.25,
+      );
+
+  Color get titleColor {
+    if (isPlain) return Colors.black87;
+    return isDark ? Colors.white : Color.lerp(Colors.black87, theme!.seedColor, 0.38)!;
+  }
+
+  Color get bodyColor => titleColor.withValues(alpha: isDark ? 0.82 : 0.90);
+
+  Color get mutedColor => titleColor.withValues(alpha: isDark ? 0.68 : 0.74);
+
+  Color get headerIconBg {
+    if (isPlain) return Colors.white.withValues(alpha: 0.52);
+    if (isDark) return Colors.white.withValues(alpha: 0.14);
+    return Color.alphaBlend(
+      theme!.seedColor.withValues(alpha: 0.22),
+      Colors.white.withValues(alpha: 0.34),
+    );
+  }
+
+  Color get seedOrNeutral => theme?.seedColor ?? const Color(0xFF9CA3AF);
+}
+
 enum SideChoice { left, right }
 enum GameMode { objectSprint, arrowRush }
+
+/// Object Side Sprint item: [id], [emoji], optional [icon], optional [emojiAsset] (full-color PNG, e.g. Twemoji).
+typedef ObjectItem = (String id, String emoji, IconData? icon, String? emojiAsset);
 
 class ObjectRound {
   ObjectRound({
@@ -100,9 +258,9 @@ class ObjectRound {
     required this.askSide,
   });
 
-  final (String, String) leftItem;
-  final (String, String) rightItem;
-  final List<(String, String)> answerOptions;
+  final ObjectItem leftItem;
+  final ObjectItem rightItem;
+  final List<ObjectItem> answerOptions;
   final SideChoice askSide;
 }
 
@@ -145,6 +303,26 @@ class SessionStats {
     this.selectedThemeIndex = 0,
   });
 
+  static const int starsPerThemeUnlock = 10;
+
+  /// First theme ([Default]) is free; each further theme costs [starsPerThemeUnlock] stars.
+  static int unlockedSlotsForStars(int totalStars) =>
+      min(AppThemes.all.length, 1 + (totalStars ~/ starsPerThemeUnlock));
+
+  /// Debug-only: all themes unlocked, enough ★, progress stats cleared.
+  factory SessionStats.devExplorationBaseline() {
+    return SessionStats(
+      bestScore: 0,
+      bestAccuracy: 0,
+      bestStreak: 0,
+      fastestAverageReactionMs: 0,
+      gamesPlayed: 0,
+      totalStars: (AppThemes.all.length - 1) * starsPerThemeUnlock,
+      unlockedThemes: AppThemes.all.length,
+      selectedThemeIndex: 0,
+    );
+  }
+
   final int bestScore;
   final double bestAccuracy;
   final int bestStreak;
@@ -162,9 +340,100 @@ class SessionStats {
   static const _totalStarsKey = 'total_stars';
   static const _unlockedThemesKey = 'unlocked_themes';
   static const _selectedThemeKey = 'selected_theme';
+  static const _statsV2Key = 'stats_v2_default_theme';
+
+  static const _devActiveKey = 'dev_mode_active';
+  static const _devBakBest = 'dev_bak_best_score';
+  static const _devBakAcc = 'dev_bak_best_accuracy';
+  static const _devBakStreak = 'dev_bak_best_streak';
+  static const _devBakFast = 'dev_bak_fastest_avg';
+  static const _devBakGames = 'dev_bak_games_played';
+  static const _devBakStars = 'dev_bak_total_stars';
+  static const _devBakUnlocked = 'dev_bak_unlocked_themes';
+  static const _devBakSel = 'dev_bak_selected_theme';
+
+  static Future<void> _migrateV2IfNeeded(SharedPreferences prefs) async {
+    if (prefs.getBool(_statsV2Key) ?? false) return;
+
+    final hasData = prefs.containsKey(_unlockedThemesKey) ||
+        prefs.containsKey(_gamesPlayedKey) ||
+        (prefs.getInt(_totalStarsKey) ?? 0) > 0;
+
+    if (hasData) {
+      final oldU = prefs.getInt(_unlockedThemesKey) ?? 0;
+      final oldS = prefs.getInt(_selectedThemeKey) ?? -1;
+      final nu = oldU <= 0 && oldS < 0
+          ? 1
+          : min(AppThemes.all.length, max(1, oldU + 1));
+      final nsel = oldS < 0 ? 0 : min(oldS + 1, nu - 1);
+      await prefs.setInt(_unlockedThemesKey, nu);
+      await prefs.setInt(_selectedThemeKey, nsel);
+    }
+    await prefs.setBool(_statsV2Key, true);
+  }
+
+  static Future<bool> isDevModeActive() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_devActiveKey) ?? false;
+  }
+
+  static Future<void> setDevModeActive(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_devActiveKey, value);
+  }
+
+  static Future<void> saveDevBackup(SessionStats s) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_devBakBest, s.bestScore);
+    await prefs.setDouble(_devBakAcc, s.bestAccuracy);
+    await prefs.setInt(_devBakStreak, s.bestStreak);
+    await prefs.setInt(_devBakFast, s.fastestAverageReactionMs);
+    await prefs.setInt(_devBakGames, s.gamesPlayed);
+    await prefs.setInt(_devBakStars, s.totalStars);
+    await prefs.setInt(_devBakUnlocked, s.unlockedThemes);
+    await prefs.setInt(_devBakSel, s.selectedThemeIndex);
+  }
+
+  static Future<SessionStats?> loadDevBackup() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey(_devBakUnlocked)) return null;
+    return SessionStats(
+      bestScore: prefs.getInt(_devBakBest) ?? 0,
+      bestAccuracy: prefs.getDouble(_devBakAcc) ?? 0,
+      bestStreak: prefs.getInt(_devBakStreak) ?? 0,
+      fastestAverageReactionMs: prefs.getInt(_devBakFast) ?? 0,
+      gamesPlayed: prefs.getInt(_devBakGames) ?? 0,
+      totalStars: prefs.getInt(_devBakStars) ?? 0,
+      unlockedThemes: prefs.getInt(_devBakUnlocked) ?? 1,
+      selectedThemeIndex: prefs.getInt(_devBakSel) ?? 0,
+    );
+  }
+
+  static Future<void> clearDevBackup() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in [
+      _devBakBest,
+      _devBakAcc,
+      _devBakStreak,
+      _devBakFast,
+      _devBakGames,
+      _devBakStars,
+      _devBakUnlocked,
+      _devBakSel,
+    ]) {
+      await prefs.remove(k);
+    }
+  }
 
   static Future<SessionStats> load() async {
     final prefs = await SharedPreferences.getInstance();
+    await _migrateV2IfNeeded(prefs);
+
+    var u = prefs.getInt(_unlockedThemesKey) ?? 1;
+    var s = prefs.getInt(_selectedThemeKey) ?? 0;
+    u = u.clamp(1, AppThemes.all.length);
+    s = s.clamp(0, u - 1);
+
     return SessionStats(
       bestScore: prefs.getInt(_bestScoreKey) ?? 0,
       bestAccuracy: prefs.getDouble(_bestAccuracyKey) ?? 0,
@@ -172,8 +441,8 @@ class SessionStats {
       fastestAverageReactionMs: prefs.getInt(_fastestAvgKey) ?? 0,
       gamesPlayed: prefs.getInt(_gamesPlayedKey) ?? 0,
       totalStars: prefs.getInt(_totalStarsKey) ?? 0,
-      unlockedThemes: prefs.getInt(_unlockedThemesKey) ?? 1,
-      selectedThemeIndex: prefs.getInt(_selectedThemeKey) ?? 0,
+      unlockedThemes: u,
+      selectedThemeIndex: s,
     );
   }
 
@@ -194,7 +463,9 @@ class SessionStats {
         (result.averageReactionMs > 0 &&
             result.averageReactionMs < fastestAverageReactionMs);
     final nextStars = totalStars + result.starsEarned;
-    final themeUnlocks = 1 + (nextStars ~/ 30);
+    final themeUnlocks = unlockedSlotsForStars(nextStars);
+    final safeSel = selectedThemeIndex < 0 ? 0 : selectedThemeIndex;
+    final nextSelected = min(safeSel, themeUnlocks - 1);
 
     return SessionStats(
       bestScore: max(bestScore, result.totalScore),
@@ -204,8 +475,8 @@ class SessionStats {
           isFastestAverage ? result.averageReactionMs : fastestAverageReactionMs,
       gamesPlayed: gamesPlayed + 1,
       totalStars: nextStars,
-      unlockedThemes: min(8, themeUnlocks),
-      selectedThemeIndex: min(selectedThemeIndex, min(8, themeUnlocks) - 1),
+      unlockedThemes: themeUnlocks,
+      selectedThemeIndex: nextSelected,
     );
   }
 }
@@ -238,7 +509,9 @@ class DifficultyController {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.onThemeChanged});
+
+  final ValueChanged<int> onThemeChanged;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -246,6 +519,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   SessionStats? _stats;
+  bool _devModeActive = false;
 
   @override
   void initState() {
@@ -255,18 +529,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadStats() async {
     final stats = await SessionStats.load();
+    final devActive = await SessionStats.isDevModeActive();
     if (!mounted) return;
-    setState(() => _stats = stats);
+    setState(() {
+      _stats = stats;
+      _devModeActive = devActive;
+    });
+    widget.onThemeChanged(stats.selectedThemeIndex);
   }
 
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
-    final unlocked = (stats?.unlockedThemes ?? 1).clamp(1, AppThemes.all.length);
+    final unlocked = stats == null
+        ? 1
+        : stats.unlockedThemes.clamp(1, AppThemes.all.length);
     final selectedTheme = stats?.selectedThemeIndex ?? 0;
-    final safeThemeIndex = min(selectedTheme, unlocked - 1);
-    final theme = AppThemes.all[min(safeThemeIndex, AppThemes.all.length - 1)];
-    final isDarkish = theme.background.first.computeLuminance() < 0.2;
+    final activeTheme =
+        AppThemes.all[min(selectedTheme, unlocked - 1).clamp(0, AppThemes.all.length - 1)];
+    final palette = HomeThemePalette(activeTheme);
+    final borderSide = palette.panelBorder;
 
     return Scaffold(
       body: Stack(
@@ -276,16 +558,13 @@ class _HomeScreenState extends State<HomeScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: theme.background,
+                colors: activeTheme.background,
               ),
             ),
             child: const SizedBox.expand(),
           ),
           Positioned.fill(
-            child: FloatingEmojiBackground(
-              emojiPool: const ['⚡', '⭐', '🍕', '🚀', '🧠', '🎯', '⬅️', '➡️'],
-              tint: isDarkish ? Colors.white : Colors.black,
-            ),
+            child: ThemeEffectLayer(theme: activeTheme),
           ),
           SafeArea(
             child: Padding(
@@ -293,11 +572,31 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _header(theme: theme, isDarkish: isDarkish),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _header(theme: activeTheme, palette: palette)),
+                      if (kDebugMode)
+                        IconButton(
+                          tooltip: _devModeActive
+                              ? 'Exit developer mode and restore your save'
+                              : 'Developer mode: unlock all themes for exploration',
+                          onPressed: () => _onDevBaselinePressed(context),
+                          icon: Icon(
+                            _devModeActive ? Icons.build_circle : Icons.developer_mode,
+                            color: palette.titleColor,
+                          ),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 14),
                   Card(
                     elevation: 0,
-                    color: Colors.white.withValues(alpha: isDarkish ? 0.08 : 0.88),
+                    color: palette.sectionSheet,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: borderSide,
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Column(
@@ -306,29 +605,30 @@ class _HomeScreenState extends State<HomeScreen> {
                           Text(
                             'Play',
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: isDarkish ? Colors.white : Colors.black87,
+                                  color: palette.titleColor,
+                                  fontWeight: FontWeight.w800,
                                 ),
                           ),
                           const SizedBox(height: 12),
                           _modeCard(
                             context: context,
+                            palette: palette,
                             title: 'Object Side Sprint',
                             subtitle:
                                 'Two objects appear left/right. Choose which icon is on the asked side.',
                             icon: Icons.dashboard_customize,
-                            accent: const Color(0xFF3B82F6),
-                            isDarkish: isDarkish,
+                            accent: palette.seedOrNeutral,
                             onPressed: _playObjectSprint,
                           ),
                           const SizedBox(height: 10),
                           _modeCard(
                             context: context,
+                            palette: palette,
                             title: 'Arrow Rush',
                             subtitle:
                                 'Arrows flash fast. Buttons are stacked so you can’t just tap the arrow side.',
                             icon: Icons.bolt,
-                            accent: const Color(0xFFFF3B30),
-                            isDarkish: isDarkish,
+                            accent: palette.seedOrNeutral,
                             onPressed: _playArrowRush,
                           ),
                         ],
@@ -338,7 +638,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 12),
                   Card(
                     elevation: 0,
-                    color: Colors.white.withValues(alpha: isDarkish ? 0.08 : 0.90),
+                    color: palette.sectionSheet,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: borderSide,
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Column(
@@ -350,14 +654,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               Text(
                                 'Themes',
                                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      color: isDarkish ? Colors.white : Colors.black87,
+                                      color: palette.titleColor,
+                                      fontWeight: FontWeight.w800,
                                     ),
                               ),
                               Text(
                                 '$unlocked/${AppThemes.all.length} unlocked',
                                 style: TextStyle(
-                                  color: (isDarkish ? Colors.white : Colors.black87)
-                                      .withValues(alpha: 0.7),
+                                  color: palette.mutedColor,
                                 ),
                               ),
                             ],
@@ -375,12 +679,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                 itemBuilder: (context, index) {
                                   final t = AppThemes.all[index];
                                   final locked = index >= unlocked;
-                                  final selected = index == selectedTheme;
+                                  final selected = !locked && index == selectedTheme;
                                   return _themePill(
                                     theme: t,
                                     locked: locked,
                                     selected: selected,
-                                    isDarkish: isDarkish,
+                                    palette: palette,
                                     onTap: locked
                                         ? null
                                         : () async {
@@ -399,6 +703,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             await updated.save();
                                             if (!mounted) return;
                                             setState(() => _stats = updated);
+                                            widget.onThemeChanged(index);
                                           },
                                   );
                                 },
@@ -406,32 +711,45 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           const SizedBox(height: 12),
                           Text(
-                            'Themes change the app’s colors and background. Earn ⭐ to unlock more.',
+                            palette.isPlain
+                                ? 'Default is always free. Earn ${SessionStats.starsPerThemeUnlock} total stars per extra theme unlock.'
+                                : 'Themes change the app colors and background. Earn ${SessionStats.starsPerThemeUnlock} stars per unlock.',
                             style: TextStyle(
-                              color: (isDarkish ? Colors.white : Colors.black87)
-                                  .withValues(alpha: 0.75),
+                              color: palette.mutedColor,
                             ),
                           ),
                           const SizedBox(height: 10),
                           if (stats != null) ...[
                             Builder(builder: (context) {
-                              final remaining = (30 - (stats.totalStars % 30)) % 30;
+                              final per = SessionStats.starsPerThemeUnlock;
+                              final unlockedSlots =
+                                  SessionStats.unlockedSlotsForStars(stats.totalStars);
+                              final towardNextTier = unlockedSlots >= AppThemes.all.length
+                                  ? 1.0
+                                  : ((stats.totalStars - (unlockedSlots - 1) * per) / per)
+                                      .clamp(0.0, 1.0);
+                              final needForNextTheme = unlockedSlots >= AppThemes.all.length
+                                  ? 0
+                                  : unlockedSlots * per - stats.totalStars;
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   LinearProgressIndicator(
-                                    value: (stats.totalStars % 30) / 30,
-                                    backgroundColor: Colors.white
-                                        .withValues(alpha: isDarkish ? 0.10 : 0.35),
+                                    value: towardNextTier,
+                                    color: palette.seedOrNeutral,
+                                    backgroundColor: palette.nestedSheet.withValues(
+                                      alpha: palette.isDark ? 0.45 : 0.65,
+                                    ),
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    remaining == 0
-                                        ? 'Theme unlocked! Keep earning for the next one.'
-                                        : '$remaining stars to next theme unlock',
+                                    unlockedSlots >= AppThemes.all.length
+                                        ? 'All themes unlocked!'
+                                        : needForNextTheme <= 0
+                                            ? 'Theme unlocked — pick it above!'
+                                            : '$needForNextTheme more stars → ${AppThemes.all[unlockedSlots].name}',
                                     style: TextStyle(
-                                      color: (isDarkish ? Colors.white : Colors.black87)
-                                          .withValues(alpha: 0.70),
+                                      color: palette.mutedColor,
                                       fontSize: 12,
                                     ),
                                   ),
@@ -449,36 +767,41 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? const Center(child: CircularProgressIndicator())
                         : Card(
                             elevation: 0,
-                            color: Colors.white.withValues(alpha: isDarkish ? 0.08 : 0.92),
+                            color: palette.sectionSheet,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: borderSide,
+                            ),
                             child: ListView(
                               padding: const EdgeInsets.all(16),
                               children: [
                                 Text(
                                   'Progress',
                                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                        color: isDarkish ? Colors.white : Colors.black87,
+                                        color: palette.titleColor,
+                                        fontWeight: FontWeight.w800,
                                       ),
                                 ),
                                 const SizedBox(height: 10),
                                 _statRow('Games Played', '${stats.gamesPlayed}',
-                                    isDarkish: isDarkish),
+                                    palette: palette),
                                 _statRow('Best Score', '${stats.bestScore}',
-                                    isDarkish: isDarkish),
+                                    palette: palette),
                                 _statRow('Total Stars', '${stats.totalStars}',
-                                    isDarkish: isDarkish),
+                                    palette: palette),
                                 _statRow(
                                   'Best Accuracy',
                                   '${stats.bestAccuracy.toStringAsFixed(1)}%',
-                                  isDarkish: isDarkish,
+                                  palette: palette,
                                 ),
                                 _statRow('Best Streak', '${stats.bestStreak}',
-                                    isDarkish: isDarkish),
+                                    palette: palette),
                                 _statRow(
                                   'Fastest Avg Reaction',
                                   stats.fastestAverageReactionMs == 0
                                       ? '-'
                                       : '${stats.fastestAverageReactionMs} ms',
-                                  isDarkish: isDarkish,
+                                  palette: palette,
                                 ),
                               ],
                             ),
@@ -493,17 +816,28 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _header({required AppTheme theme, required bool isDarkish}) {
+  Widget _header({required AppTheme theme, required HomeThemePalette palette}) {
     return Row(
       children: [
         Container(
           width: 48,
           height: 48,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: isDarkish ? 0.10 : 0.75),
+            color: palette.headerIconBg,
             borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: palette.seedOrNeutral.withValues(
+                alpha: palette.isPlain ? 0.35 : (palette.isDark ? 0.25 : 0.35),
+              ),
+            ),
           ),
-          child: Center(child: Text(theme.icon, style: const TextStyle(fontSize: 22))),
+          child: Center(
+            child: Icon(
+              theme.icon,
+              size: 24,
+              color: palette.titleColor,
+            ),
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -513,15 +847,14 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 'LeftRight Rush',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: isDarkish ? Colors.white : Colors.black87,
+                      color: palette.titleColor,
                       fontWeight: FontWeight.w800,
                     ),
               ),
               Text(
                 'Fast, fun left/right brain training',
                 style: TextStyle(
-                  color:
-                      (isDarkish ? Colors.white : Colors.black87).withValues(alpha: 0.7),
+                  color: palette.mutedColor,
                 ),
               ),
             ],
@@ -535,31 +868,35 @@ class _HomeScreenState extends State<HomeScreen> {
     required AppTheme theme,
     required bool locked,
     required bool selected,
-    required bool isDarkish,
+    required HomeThemePalette palette,
     VoidCallback? onTap,
   }) {
-    final base = Colors.white.withValues(alpha: isDarkish ? 0.10 : 0.85);
+    final base = palette.nestedSheet;
+    final seed = theme.seedColor;
+    final idleBorder = palette.isPlain
+        ? Colors.black.withValues(alpha: 0.12)
+        : seed.withValues(alpha: palette.isDark ? 0.12 : 0.22);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Ink(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? theme.seedColor.withValues(alpha: 0.22) : base,
+          color: selected ? seed.withValues(alpha: palette.isDark ? 0.30 : 0.26) : base,
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: selected ? theme.seedColor.withValues(alpha: 0.6) : Colors.transparent,
+            color: selected ? seed.withValues(alpha: 0.75) : idleBorder,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(locked ? '🔒' : theme.icon),
+            Icon(locked ? Icons.lock_rounded : theme.icon, size: 18, color: palette.titleColor),
             const SizedBox(width: 8),
             Text(
               theme.name,
               style: TextStyle(
-                color: isDarkish ? Colors.white : Colors.black87,
+                color: palette.titleColor,
                 fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
               ),
             ),
@@ -571,16 +908,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _modeCard({
     required BuildContext context,
+    required HomeThemePalette palette,
     required String title,
     required String subtitle,
     required IconData icon,
     required Color accent,
-    required bool isDarkish,
     required Future<void> Function() onPressed,
   }) {
     return Card(
       elevation: 0,
-      color: Colors.white.withValues(alpha: isDarkish ? 0.10 : 0.92),
+      color: palette.nestedSheet,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: accent.withValues(alpha: palette.isDark ? 0.28 : 0.35)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
@@ -589,7 +930,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 46,
               height: 46,
               decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.18),
+                color: accent.withValues(alpha: palette.isDark ? 0.22 : 0.20),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, color: accent),
@@ -602,7 +943,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: isDarkish ? Colors.white : Colors.black87,
+                          color: palette.titleColor,
                           fontWeight: FontWeight.w800,
                         ),
                   ),
@@ -610,8 +951,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     subtitle,
                     style: TextStyle(
-                      color: (isDarkish ? Colors.white : Colors.black87)
-                          .withValues(alpha: 0.75),
+                      color: palette.bodyColor,
                     ),
                   ),
                 ],
@@ -629,16 +969,109 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _onDevBaselinePressed(BuildContext context) async {
+    if (_devModeActive) {
+      final restore = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Exit developer mode?'),
+          content: const Text(
+            'Restore your progress, stars, and theme unlocks from before developer mode.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Restore'),
+            ),
+          ],
+        ),
+      );
+      if (restore != true || !mounted) return;
+
+      final back = await SessionStats.loadDevBackup() ?? SessionStats();
+      await back.save();
+      await SessionStats.clearDevBackup();
+      await SessionStats.setDevModeActive(false);
+      if (!mounted) return;
+      setState(() {
+        _stats = back;
+        _devModeActive = false;
+      });
+      widget.onThemeChanged(back.selectedThemeIndex);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Developer mode off — progress restored')),
+      );
+      return;
+    }
+
+    final apply = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter developer mode?'),
+        content: Text(
+          'Unlock all ${AppThemes.all.length} themes (${SessionStats.starsPerThemeUnlock}★ each), '
+          'and reset games played / best scores / streaks so you can explore from a clean slate. '
+          'Tap the button again to restore your previous save.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Enter'),
+          ),
+        ],
+      ),
+    );
+    if (apply != true || !mounted) return;
+
+    final current = _stats ?? await SessionStats.load();
+    await SessionStats.saveDevBackup(current);
+
+    final baseline = SessionStats.devExplorationBaseline();
+    await baseline.save();
+    await SessionStats.setDevModeActive(true);
+    if (!mounted) return;
+    setState(() {
+      _stats = baseline;
+      _devModeActive = true;
+    });
+    widget.onThemeChanged(baseline.selectedThemeIndex);
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Developer mode on (debug build only)')),
+    );
+  }
+
+  AppTheme _gameplayTheme(SessionStats s) {
+    final u = s.unlockedThemes.clamp(1, AppThemes.all.length);
+    final i = s.selectedThemeIndex.clamp(0, u - 1);
+    return AppThemes.all[i];
+  }
+
   Future<void> _playObjectSprint() async {
+    final stats = _stats ?? SessionStats();
+    final theme = _gameplayTheme(stats);
     final result = await Navigator.of(context).push<GameResult>(
-      MaterialPageRoute(builder: (_) => const ObjectSideSprintScreen()),
+      MaterialPageRoute(builder: (_) => ObjectSideSprintScreen(theme: theme)),
     );
     await _persistResult(result);
   }
 
   Future<void> _playArrowRush() async {
+    final stats = _stats ?? SessionStats();
+    final theme = _gameplayTheme(stats);
     final result = await Navigator.of(context).push<GameResult>(
-      MaterialPageRoute(builder: (_) => const ArrowRushScreen()),
+      MaterialPageRoute(builder: (_) => ArrowRushScreen(theme: theme)),
     );
     await _persistResult(result);
   }
@@ -650,20 +1083,21 @@ class _HomeScreenState extends State<HomeScreen> {
     await updated.save();
     if (!mounted) return;
     setState(() => _stats = updated);
+    widget.onThemeChanged(updated.selectedThemeIndex);
   }
 
-  Widget _statRow(String label, String value, {required bool isDarkish}) {
+  Widget _statRow(String label, String value, {required HomeThemePalette palette}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: isDarkish ? Colors.white : Colors.black87)),
+          Text(label, style: TextStyle(color: palette.bodyColor)),
           Text(
             value,
             style: TextStyle(
               fontWeight: FontWeight.bold,
-              color: isDarkish ? Colors.white : Colors.black87,
+              color: palette.titleColor,
             ),
           ),
         ],
@@ -673,7 +1107,9 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class ObjectSideSprintScreen extends StatefulWidget {
-  const ObjectSideSprintScreen({super.key});
+  const ObjectSideSprintScreen({super.key, required this.theme});
+
+  final AppTheme theme;
 
   @override
   State<ObjectSideSprintScreen> createState() => _ObjectSideSprintScreenState();
@@ -681,17 +1117,17 @@ class ObjectSideSprintScreen extends StatefulWidget {
 
 class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
   static const int gameLengthSeconds = 45;
-  static final List<(String, String)> _objectPool = [
-    ('ball', '⚽'),
-    ('apple', '🍎'),
-    ('star', '⭐'),
-    ('rocket', '🚀'),
-    ('gift', '🎁'),
-    ('book', '📘'),
-    ('car', '🚗'),
-    ('moon', '🌙'),
-    ('pizza', '🍕'),
-    ('teddy', '🧸'),
+  static const List<ObjectItem> _objectPool = [
+    ('ball', '', null, 'assets/emoji/soccer_ball.png'),
+    ('apple', '🍎', null, null),
+    ('star', '⭐', null, null),
+    ('rocket', '🚀', null, null),
+    ('gift', '🎁', null, null),
+    ('book', '📘', null, null),
+    ('car', '🚗', null, null),
+    ('moon', '🌙', null, null),
+    ('pizza', '🍕', null, null),
+    ('teddy', '🧸', null, null),
   ];
 
   final ScoreEngine _scoreEngine = ScoreEngine();
@@ -734,7 +1170,7 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
     }
     final leftItem = _objectPool[leftIndex];
     final rightItem = _objectPool[rightIndex];
-    final options = <(String, String)>[leftItem, rightItem]..shuffle(_random);
+    final options = <ObjectItem>[leftItem, rightItem]..shuffle(_random);
     final askSide = _random.nextBool() ? SideChoice.left : SideChoice.right;
 
     setState(() {
@@ -748,7 +1184,7 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
     });
   }
 
-  void _select((String, String) selectedItem) {
+  void _select(ObjectItem selectedItem) {
     final round = _round;
     final start = _roundStart;
     if (round == null || start == null) return;
@@ -806,7 +1242,10 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
     );
 
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => ResultsScreen(result: result)),
+      MaterialPageRoute(
+        builder: (_) => ResultsScreen(result: result, theme: widget.theme),
+      ),
+      result: result,
     );
   }
 
@@ -828,88 +1267,127 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
     if (round == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Object Side Sprint')),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Stack(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    scheme.primary.withValues(alpha: 0.12),
+                    scheme.tertiary.withValues(alpha: 0.08),
+                  ],
+                ),
+              ),
+              child: const SizedBox.expand(),
+            ),
+            Positioned.fill(child: ThemeEffectLayer(theme: widget.theme)),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
                 children: [
-                  _chip('Time', '${_timeLeftSeconds}s'),
-                  _chip('Score', '$_score'),
-                  _chip('Streak', '$_streak'),
-                  _chip('Lvl', '$_difficultyLevel'),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _chip('Time', '${_timeLeftSeconds}s'),
+                    _chip('Score', '$_score'),
+                    _chip('Streak', '$_streak'),
+                    _chip('Lvl', '$_difficultyLevel'),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  child: Text(
+                    round.askSide == SideChoice.left
+                        ? 'Which item is on the left?'
+                        : 'Which item is on the right?',
+                    key: ValueKey(
+                      '${round.leftItem.$1}_${round.rightItem.$1}_${_correct + _wrong}',
+                    ),
+                    style: Theme.of(context).textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  height: 170,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _sidePanel(
+                          item: round.leftItem,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _sidePanel(
+                          item: round.rightItem,
+                          color: scheme.secondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _answerButton(round.answerOptions[0], scheme),
+                      const SizedBox(height: 12),
+                      _answerButton(round.answerOptions[1], scheme),
+                    ],
+                  ),
+                )
                 ],
               ),
-              const SizedBox(height: 24),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                child: Text(
-                  round.askSide == SideChoice.left
-                      ? 'Which item is on the left?'
-                      : 'Which item is on the right?',
-                  key: ValueKey(
-                    '${round.leftItem.$1}_${round.rightItem.$1}_${_correct + _wrong}',
-                  ),
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                height: 170,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _sidePanel(
-                        emoji: round.leftItem.$2,
-                        color: const Color(0xFF4E8DFF),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: _sidePanel(
-                        emoji: round.rightItem.$2,
-                        color: const Color(0xFFFF6C63),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _answerButton(round.answerOptions[0]),
-                    const SizedBox(height: 12),
-                    _answerButton(round.answerOptions[1]),
-                  ],
-                ),
-              )
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _chip(String label, String value) {
+    final scheme = Theme.of(context).colorScheme;
     return Chip(
       label: Text('$label: $value'),
-      backgroundColor: Colors.white,
+      backgroundColor: scheme.primary.withValues(alpha: 0.14),
       side: BorderSide.none,
     );
   }
 
   Widget _sidePanel({
-    required String emoji,
+    required ObjectItem item,
     required Color color,
   }) {
+    final Widget glyph = item.$4 != null
+        ? Image.asset(
+            item.$4!,
+            width: 86,
+            height: 86,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+          )
+        : item.$3 != null
+            ? Icon(
+                item.$3,
+                size: 88,
+                color: Colors.white,
+              )
+            : Text(
+                item.$2,
+                style: emojiGlyphStyle(86),
+                textAlign: TextAlign.center,
+              );
     return Ink(
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.92),
@@ -922,32 +1400,45 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
           ),
         ],
       ),
-      child: Center(
-        child: Text(
-          emoji,
-          style: const TextStyle(fontSize: 84),
-        ),
-      ),
+      child: Center(child: glyph),
     );
   }
 
-  Widget _answerButton((String, String) option) {
+  Widget _answerButton(ObjectItem option, ColorScheme scheme) {
     return Expanded(
       child: FilledButton(
         onPressed: () => _select(option),
         style: FilledButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
+          backgroundColor: scheme.surface,
+          foregroundColor: scheme.onSurface,
+          side: BorderSide(color: scheme.primary.withValues(alpha: 0.35)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(option.$2, style: const TextStyle(fontSize: 44)),
+            option.$4 != null
+                ? Image.asset(
+                    option.$4!,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.medium,
+                  )
+                : option.$3 != null
+                    ? Icon(option.$3, size: 48, color: scheme.onSurface)
+                    : Text(
+                        option.$2,
+                        style: emojiGlyphStyle(48),
+                      ),
             const SizedBox(height: 4),
             Text(
               option.$1.toUpperCase(),
-              style: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.6),
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: scheme.onSurface,
+              ),
             ),
           ],
         ),
@@ -956,21 +1447,183 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
   }
 }
 
-class FloatingEmojiBackground extends StatefulWidget {
-  const FloatingEmojiBackground({
-    super.key,
-    required this.emojiPool,
-    required this.tint,
-  });
+/// Background motion per theme. Floating layers use **at most two** icons each, strictly on-theme.
+class ThemeEffectLayer extends StatelessWidget {
+  const ThemeEffectLayer({super.key, required this.theme});
 
-  final List<String> emojiPool;
-  final Color tint;
+  final AppTheme theme;
 
   @override
-  State<FloatingEmojiBackground> createState() => _FloatingEmojiBackgroundState();
+  Widget build(BuildContext context) {
+    switch (theme.effect) {
+      case ThemeVisualEffect.none:
+        return FloatingIconBackground(
+          iconPool: const [Icons.palette_outlined, Icons.tune_rounded],
+          tint: const Color(0xFF71717A),
+          count: 14,
+          alpha: 0.085,
+          speedMin: 0.08,
+          speedMax: 0.35,
+          drift: 0.07,
+          minGlyphSize: 12,
+          maxGlyphSize: 32,
+        );
+      case ThemeVisualEffect.neonPulse:
+        return FloatingIconBackground(
+          iconPool: const [Icons.flash_on_rounded, Icons.bolt_rounded],
+          tint: theme.seedColor,
+          count: 16,
+          alpha: 0.11,
+          speedMin: 0.1,
+          speedMax: 0.45,
+          drift: 0.1,
+          minGlyphSize: 14,
+          maxGlyphSize: 34,
+        );
+      case ThemeVisualEffect.starfield:
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            TwinkleDotsBackground(tint: theme.seedColor.withValues(alpha: 0.95)),
+            FloatingIconBackground(
+              iconPool: const [Icons.rocket_launch_rounded, Icons.star_rounded],
+              tint: const Color(0xFFC4B5FD),
+              count: 14,
+              alpha: 0.12,
+              speedMin: 0.06,
+              speedMax: 0.28,
+              drift: 0.1,
+              minGlyphSize: 14,
+              maxGlyphSize: 36,
+            ),
+          ],
+        );
+      case ThemeVisualEffect.jungleDrift:
+        return FloatingIconBackground(
+          iconPool: const [Icons.park_rounded, Icons.eco_rounded],
+          tint: const Color(0xFF0F6A3A),
+          count: 14,
+          alpha: 0.1,
+          speedMin: 0.06,
+          speedMax: 0.32,
+          drift: 0.08,
+          minGlyphSize: 14,
+          maxGlyphSize: 36,
+        );
+      case ThemeVisualEffect.candyBubbles:
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            BubbleBackground(tint: theme.seedColor),
+            BubbleBackground(
+              tint: Color.lerp(theme.seedColor, const Color(0xFFFBBF24), 0.35)!,
+            ),
+            FloatingIconBackground(
+              iconPool: const [Icons.cake_rounded, Icons.icecream_rounded],
+              tint: theme.seedColor,
+              count: 14,
+              alpha: 0.12,
+              speedMin: 0.1,
+              speedMax: 0.4,
+              drift: 0.12,
+              minGlyphSize: 14,
+              maxGlyphSize: 32,
+            ),
+          ],
+        );
+      case ThemeVisualEffect.oceanWave:
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            WaveBandsBackground(tint: theme.seedColor),
+            FloatingIconBackground(
+              iconPool: const [Icons.waves_rounded, Icons.water_drop_rounded],
+              tint: theme.seedColor,
+              count: 16,
+              alpha: 0.12,
+              speedMin: 0.08,
+              speedMax: 0.4,
+              drift: 0.11,
+              minGlyphSize: 12,
+              maxGlyphSize: 34,
+            ),
+          ],
+        );
+      case ThemeVisualEffect.sunsetOrbs:
+        return FloatingIconBackground(
+          iconPool: const [Icons.wb_sunny_rounded, Icons.wb_twilight_rounded],
+          tint: const Color(0xFFE76F51),
+          count: 14,
+          alpha: 0.1,
+          speedMin: 0.06,
+          speedMax: 0.3,
+          drift: 0.12,
+          minGlyphSize: 14,
+          maxGlyphSize: 36,
+        );
+      case ThemeVisualEffect.galaxySpiral:
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            SpiralSparkleBackground(tint: theme.seedColor),
+            FloatingIconBackground(
+              iconPool: const [Icons.star_rounded, Icons.auto_awesome_rounded],
+              tint: const Color(0xFFF472B6),
+              count: 14,
+              alpha: 0.1,
+              speedMin: 0.06,
+              speedMax: 0.35,
+              drift: 0.12,
+              minGlyphSize: 12,
+              maxGlyphSize: 32,
+            ),
+          ],
+        );
+      case ThemeVisualEffect.snowfall:
+        return FloatingIconBackground(
+          iconPool: const [Icons.ac_unit_rounded, Icons.cloud_rounded],
+          tint: const Color(0xFF38BDF8),
+          count: 14,
+          alpha: 0.11,
+          speedMin: 0.08,
+          speedMax: 0.35,
+          drift: 0.06,
+          minGlyphSize: 12,
+          maxGlyphSize: 32,
+        );
+    }
+  }
 }
 
-class _FloatingEmojiBackgroundState extends State<FloatingEmojiBackground>
+class FloatingIconBackground extends StatefulWidget {
+  const FloatingIconBackground({
+    super.key,
+    required this.iconPool,
+    required this.tint,
+    this.count = 14,
+    this.alpha = 0.10,
+    this.speedMin = 0.2,
+    this.speedMax = 0.8,
+    this.drift = 0.10,
+    this.minGlyphSize = 14,
+    this.maxGlyphSize = 40,
+  });
+
+  final List<IconData> iconPool;
+  final Color tint;
+  final int count;
+  final double alpha;
+  final double speedMin;
+  final double speedMax;
+  final double drift;
+  final double minGlyphSize;
+  final double maxGlyphSize;
+
+  @override
+  State<FloatingIconBackground> createState() => _FloatingIconBackgroundState();
+}
+
+class _FloatingIconBackgroundState extends State<FloatingIconBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   final Random _rand = Random();
@@ -979,19 +1632,19 @@ class _FloatingEmojiBackgroundState extends State<FloatingEmojiBackground>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 14),
-    )..repeat();
+    _controller =
+        AnimationController(vsync: this, duration: const Duration(seconds: 14))
+          ..repeat();
 
-    _floaties = List.generate(14, (i) {
+    final sizeSpan = max(4.0, widget.maxGlyphSize - widget.minGlyphSize);
+    _floaties = List.generate(widget.count, (i) {
       return _Floaty(
-        emoji: widget.emojiPool[_rand.nextInt(widget.emojiPool.length)],
+        icon: widget.iconPool[_rand.nextInt(widget.iconPool.length)],
         x: _rand.nextDouble(),
         y: _rand.nextDouble(),
-        size: 18 + _rand.nextInt(18).toDouble(),
-        speed: 0.2 + _rand.nextDouble() * 0.8,
-        drift: (_rand.nextDouble() - 0.5) * 0.10,
+        size: widget.minGlyphSize + _rand.nextDouble() * sizeSpan,
+        speed: widget.speedMin + _rand.nextDouble() * (widget.speedMax - widget.speedMin),
+        drift: (_rand.nextDouble() - 0.5) * widget.drift,
         phase: _rand.nextDouble(),
       );
     });
@@ -1005,24 +1658,27 @@ class _FloatingEmojiBackgroundState extends State<FloatingEmojiBackground>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        return CustomPaint(
-          painter: _FloatingEmojiPainter(
-            floaties: _floaties,
-            t: _controller.value,
-            tint: widget.tint,
-          ),
-        );
-      },
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          return CustomPaint(
+            painter: _FloatingIconPainter(
+              floaties: _floaties,
+              t: _controller.value,
+              tint: widget.tint,
+              alpha: widget.alpha,
+            ),
+          );
+        },
+      ),
     );
   }
 }
 
 class _Floaty {
   _Floaty({
-    required this.emoji,
+    required this.icon,
     required this.x,
     required this.y,
     required this.size,
@@ -1031,7 +1687,7 @@ class _Floaty {
     required this.phase,
   });
 
-  final String emoji;
+  final IconData icon;
   final double x;
   final double y;
   final double size;
@@ -1040,16 +1696,18 @@ class _Floaty {
   final double phase;
 }
 
-class _FloatingEmojiPainter extends CustomPainter {
-  _FloatingEmojiPainter({
+class _FloatingIconPainter extends CustomPainter {
+  _FloatingIconPainter({
     required this.floaties,
     required this.t,
     required this.tint,
+    required this.alpha,
   });
 
   final List<_Floaty> floaties;
   final double t;
   final Color tint;
+  final double alpha;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1060,10 +1718,12 @@ class _FloatingEmojiPainter extends CustomPainter {
       final offset = Offset(dx * size.width, dy * size.height);
       final tp = TextPainter(
         text: TextSpan(
-          text: f.emoji,
+          text: String.fromCharCode(f.icon.codePoint),
           style: TextStyle(
             fontSize: f.size,
-            color: tint.withValues(alpha: 0.10),
+            color: tint.withValues(alpha: alpha),
+            fontFamily: f.icon.fontFamily ?? 'MaterialIcons',
+            package: f.icon.fontPackage,
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -1074,15 +1734,291 @@ class _FloatingEmojiPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _FloatingEmojiPainter oldDelegate) {
+  bool shouldRepaint(covariant _FloatingIconPainter oldDelegate) {
     return oldDelegate.t != t || oldDelegate.tint != tint;
   }
 }
 
+class TwinkleDotsBackground extends StatefulWidget {
+  const TwinkleDotsBackground({super.key, required this.tint});
+  final Color tint;
+  @override
+  State<TwinkleDotsBackground> createState() => _TwinkleDotsBackgroundState();
+}
+
+class _TwinkleDotsBackgroundState extends State<TwinkleDotsBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 6))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => CustomPaint(
+          painter: _TwinklePainter(t: _c.value, tint: widget.tint),
+        ),
+      ),
+    );
+  }
+}
+
+class _TwinklePainter extends CustomPainter {
+  _TwinklePainter({required this.t, required this.tint});
+  final double t;
+  final Color tint;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    for (var i = 0; i < 48; i++) {
+      final x = (i * 73 % 100) / 100 * size.width;
+      final y = (i * 41 % 100) / 100 * size.height;
+      final pulse = (sin((t * 2 * pi) + i * 0.31) + 1) / 2;
+      paint.color = tint.withValues(alpha: 0.035 + pulse * 0.2);
+      canvas.drawCircle(Offset(x, y), 1.2 + pulse * 2.8, paint);
+    }
+    for (var i = 0; i < 18; i++) {
+      final x = (i * 59 % 100) / 100 * size.width;
+      final y = (i * 83 % 100) / 100 * size.height;
+      final pulse = (sin((t * 3 * pi) + i) + 1) / 2;
+      paint.color = Colors.white.withValues(alpha: 0.02 + pulse * 0.07);
+      canvas.drawCircle(Offset(x, y), 0.8 + pulse * 1.6, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TwinklePainter oldDelegate) => oldDelegate.t != t;
+}
+
+class BubbleBackground extends StatefulWidget {
+  const BubbleBackground({super.key, required this.tint});
+  final Color tint;
+  @override
+  State<BubbleBackground> createState() => _BubbleBackgroundState();
+}
+
+class _BubbleBackgroundState extends State<BubbleBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 10))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => CustomPaint(
+          painter: _BubblePainter(t: _c.value, tint: widget.tint),
+        ),
+      ),
+    );
+  }
+}
+
+class _BubblePainter extends CustomPainter {
+  _BubblePainter({required this.t, required this.tint});
+  final double t;
+  final Color tint;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()..style = PaintingStyle.stroke;
+    final fill = Paint()..style = PaintingStyle.fill;
+    for (var i = 0; i < 28; i++) {
+      final x = (i * 47 % 100) / 100 * size.width;
+      final y = (1 - ((t * 0.85 + (i / 34)) % 1.0)) * size.height;
+      final r = 7 + (i % 6) * 3.5;
+      stroke.color = tint.withValues(alpha: 0.07 + (i % 5) * 0.028);
+      stroke.strokeWidth = 1.2 + (i % 3) * 0.15;
+      canvas.drawCircle(Offset(x, y), r, stroke);
+      fill.color = tint.withValues(alpha: 0.03 + (i % 4) * 0.015);
+      canvas.drawCircle(Offset(x, y), r * 0.35, fill);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BubblePainter oldDelegate) => oldDelegate.t != t;
+}
+
+class WaveBandsBackground extends StatefulWidget {
+  const WaveBandsBackground({super.key, required this.tint});
+  final Color tint;
+  @override
+  State<WaveBandsBackground> createState() => _WaveBandsBackgroundState();
+}
+
+class _WaveBandsBackgroundState extends State<WaveBandsBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 7))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => CustomPaint(
+          painter: _WavePainter(t: _c.value, tint: widget.tint),
+        ),
+      ),
+    );
+  }
+}
+
+class _WavePainter extends CustomPainter {
+  _WavePainter({required this.t, required this.tint});
+  final double t;
+  final Color tint;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = tint.withValues(alpha: 0.11)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    final paintSoft = Paint()
+      ..color = tint.withValues(alpha: 0.06)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6;
+    for (var band = 0; band < 5; band++) {
+      final path = Path();
+      final yBase = size.height * (0.14 + band * 0.16);
+      path.moveTo(0, yBase);
+      for (double x = 0; x <= size.width; x += 8) {
+        final y = yBase +
+            sin((x / size.width) * 2 * pi + t * 2 * pi + band * 0.7) * (9 + band);
+        path.lineTo(x, y);
+      }
+      canvas.drawPath(path, band.isEven ? paint : paintSoft);
+    }
+    for (var band = 0; band < 3; band++) {
+      final path = Path();
+      final yBase = size.height * (0.55 + band * 0.14);
+      path.moveTo(0, yBase);
+      for (double x = 0; x <= size.width; x += 10) {
+        final y = yBase +
+            sin((x / size.width) * 3 * pi - t * 2.2 * pi + band) * (5 + band * 2);
+        path.lineTo(x, y);
+      }
+      paintSoft.color = tint.withValues(alpha: 0.045);
+      canvas.drawPath(path, paintSoft);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WavePainter oldDelegate) => oldDelegate.t != t;
+}
+
+class SpiralSparkleBackground extends StatefulWidget {
+  const SpiralSparkleBackground({super.key, required this.tint});
+  final Color tint;
+  @override
+  State<SpiralSparkleBackground> createState() => _SpiralSparkleBackgroundState();
+}
+
+class _SpiralSparkleBackgroundState extends State<SpiralSparkleBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 9))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => CustomPaint(
+          painter: _SpiralPainter(t: _c.value, tint: widget.tint),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpiralPainter extends CustomPainter {
+  _SpiralPainter({required this.t, required this.tint});
+  final double t;
+  final Color tint;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final p = Paint()..style = PaintingStyle.fill;
+    for (var arm = 0; arm < 2; arm++) {
+      final armPhase = arm * pi;
+      for (var i = 0; i < 44; i++) {
+        final angle = (i / 44) * 7 * pi + t * 2 * pi + armPhase;
+        final radius = 12 + i * 3.4;
+        final pos = center +
+            Offset(
+              cos(angle) * radius * (arm == 0 ? 1.0 : -0.92),
+              sin(angle) * radius * 0.58,
+            );
+        p.color = tint.withValues(alpha: 0.045 + (i % 6) * 0.018);
+        canvas.drawCircle(pos, 1.4 + (i % 4) * 0.85, p);
+      }
+    }
+    for (var i = 0; i < 11; i++) {
+      final a = (i / 11) * 2 * pi + t * 3 * pi;
+      final r = size.shortestSide * (0.12 + (i % 5) * 0.04);
+      p.color = tint.withValues(alpha: 0.08);
+      canvas.drawCircle(center + Offset(cos(a) * r, sin(a) * r * 0.5), 2.2, p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpiralPainter oldDelegate) => oldDelegate.t != t;
+}
+
 class ResultsScreen extends StatelessWidget {
-  const ResultsScreen({super.key, required this.result});
+  const ResultsScreen({super.key, required this.result, required this.theme});
 
   final GameResult result;
+  final AppTheme theme;
 
   String get _modeTitle {
     switch (result.mode) {
@@ -1093,107 +2029,205 @@ class ResultsScreen extends StatelessWidget {
     }
   }
 
+  /// Dark home themes set [MaterialApp] to dark brightness; this screen uses light
+  /// surfaces, so we use a **light** scheme from the same seed for readable type.
+  static ThemeData _resultsThemeFor(AppTheme appTheme) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: appTheme.seedColor,
+      brightness: Brightness.light,
+    );
+    final base = ThemeData(colorScheme: scheme, useMaterial3: true);
+    final on = scheme.onSurface;
+    final onMuted = scheme.onSurface.withValues(alpha: 0.78);
+    return base.copyWith(
+      textTheme: base.textTheme.copyWith(
+        titleLarge: base.textTheme.titleLarge?.copyWith(
+          color: on,
+          fontWeight: FontWeight.w800,
+        ),
+        headlineMedium: base.textTheme.headlineMedium?.copyWith(
+          color: on,
+          fontWeight: FontWeight.w800,
+        ),
+        titleMedium: base.textTheme.titleMedium?.copyWith(
+          color: on,
+          fontWeight: FontWeight.w600,
+        ),
+        titleSmall: base.textTheme.titleSmall?.copyWith(
+          color: onMuted,
+          fontWeight: FontWeight.w600,
+        ),
+        bodyLarge: base.textTheme.bodyLarge?.copyWith(
+          color: on,
+          fontWeight: FontWeight.w500,
+        ),
+        bodyMedium: base.textTheme.bodyMedium?.copyWith(
+          color: onMuted,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Round Complete')),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Text(_modeTitle, style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 8),
-                      Text('Score: ${result.totalScore}',
-                          style: Theme.of(context).textTheme.headlineMedium),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Accuracy: ${result.accuracy.toStringAsFixed(1)}%',
-                        style: Theme.of(context).textTheme.titleMedium,
+    return Theme(
+      data: _resultsThemeFor(theme),
+      child: Builder(
+        builder: (context) {
+          final cs = Theme.of(context).colorScheme;
+          final cardColor = Color.alphaBlend(
+            theme.seedColor.withValues(alpha: 0.06),
+            cs.surfaceContainerLow,
+          );
+          final border = BorderSide(
+            color: theme.seedColor.withValues(alpha: 0.22),
+          );
+
+          Widget statCard({required Widget child}) {
+            return Card(
+              elevation: 0,
+              color: cardColor,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: border,
+              ),
+              child: child,
+            );
+          }
+
+          return Scaffold(
+            backgroundColor: Color.alphaBlend(
+              theme.seedColor.withValues(alpha: 0.04),
+              cs.surface,
+            ),
+            appBar: AppBar(
+              title: const Text('Round Complete'),
+              backgroundColor: cs.surfaceContainerLow,
+              foregroundColor: cs.onSurface,
+              elevation: 0,
+              surfaceTintColor: theme.seedColor.withValues(alpha: 0.35),
+            ),
+            body: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    statCard(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            Text(_modeTitle, style: Theme.of(context).textTheme.titleLarge),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Score: ${result.totalScore}',
+                              style: Theme.of(context).textTheme.headlineMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Accuracy: ${result.accuracy.toStringAsFixed(1)}%',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  'Stars earned: ',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                                for (var i = 0; i < result.starsEarned; i++)
+                                  Icon(
+                                    Icons.star_rounded,
+                                    color: Color.lerp(Colors.amber.shade700, theme.seedColor, 0.15),
+                                    size: 22,
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      Text('Stars earned: ${'⭐' * result.starsEarned}'),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 16),
+                    statCard(
+                      child: ListTile(
+                        title: const Text('Correct Answers'),
+                        trailing: Text(
+                          '${result.correctAnswers}',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    statCard(
+                      child: ListTile(
+                        title: const Text('Wrong Answers'),
+                        trailing: Text(
+                          '${result.wrongAnswers}',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    statCard(
+                      child: ListTile(
+                        title: const Text('Best Streak'),
+                        trailing: Text(
+                          '${result.bestStreak}',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    statCard(
+                      child: ListTile(
+                        title: const Text('Max Difficulty Reached'),
+                        trailing: Text(
+                          'Level ${result.maxDifficulty}',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    statCard(
+                      child: ListTile(
+                        title: const Text('Average Reaction'),
+                        trailing: Text(
+                          '${result.averageReactionMs} ms',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        final Widget nextScreen = switch (result.mode) {
+                          GameMode.objectSprint => ObjectSideSprintScreen(theme: theme),
+                          GameMode.arrowRush => ArrowRushScreen(theme: theme),
+                        };
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(builder: (_) => nextScreen),
+                        );
+                      },
+                      child: const Text('Play Again'),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(result),
+                      child: const Text('Back to Home'),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 16),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: ListTile(
-                  title: const Text('Correct Answers'),
-                  trailing: Text('${result.correctAnswers}'),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: ListTile(
-                  title: const Text('Wrong Answers'),
-                  trailing: Text('${result.wrongAnswers}'),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: ListTile(
-                  title: const Text('Best Streak'),
-                  trailing: Text('${result.bestStreak}'),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: ListTile(
-                  title: const Text('Max Difficulty Reached'),
-                  trailing: Text('Level ${result.maxDifficulty}'),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                child: ListTile(
-                  title: const Text('Average Reaction'),
-                  trailing: Text('${result.averageReactionMs} ms'),
-                ),
-              ),
-              const Spacer(),
-              FilledButton(
-                onPressed: () {
-                  final Widget nextScreen = switch (result.mode) {
-                    GameMode.objectSprint => const ObjectSideSprintScreen(),
-                    GameMode.arrowRush => const ArrowRushScreen(),
-                  };
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (_) => nextScreen),
-                  );
-                },
-                child: const Text('Play Again'),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: () => Navigator.of(context).pop(result),
-                child: const Text('Back to Home'),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 }
 
 class ArrowRushScreen extends StatefulWidget {
-  const ArrowRushScreen({super.key});
+  const ArrowRushScreen({super.key, required this.theme});
+
+  final AppTheme theme;
 
   @override
   State<ArrowRushScreen> createState() => _ArrowRushScreenState();
@@ -1308,7 +2342,10 @@ class _ArrowRushScreenState extends State<ArrowRushScreen> {
     );
 
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => ResultsScreen(result: result)),
+      MaterialPageRoute(
+        builder: (_) => ResultsScreen(result: result, theme: widget.theme),
+      ),
+      result: result,
     );
   }
 
@@ -1328,71 +2365,97 @@ class _ArrowRushScreenState extends State<ArrowRushScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isLeft = _target == SideChoice.left;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Arrow Rush')),
       body: SafeArea(
         child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _chip('Time', '${_timeLeftSeconds}s'),
-                      _chip('Score', '$_score'),
-                      _chip('Lvl', '$_difficultyLevel'),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Match the arrow direction',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: Center(
-                      child: AnimatedScale(
-                        duration: const Duration(milliseconds: 180),
-                        scale: 1 + min(0.3, _difficultyLevel * 0.03),
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(
-                            isLeft ? Icons.arrow_back_rounded : Icons.arrow_forward_rounded,
-                            key: ValueKey(_target.name),
-                            size: 170,
-                            color: Colors.black87,
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    scheme.primary.withValues(alpha: 0.14),
+                    scheme.secondary.withValues(alpha: 0.10),
+                  ],
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _chip('Time', '${_timeLeftSeconds}s'),
+                        _chip('Score', '$_score'),
+                        _chip('Lvl', '$_difficultyLevel'),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Match the arrow direction',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: Center(
+                        child: AnimatedScale(
+                          duration: const Duration(milliseconds: 180),
+                          scale: 1 + min(0.3, _difficultyLevel * 0.03),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              isLeft ? Icons.arrow_back_rounded : Icons.arrow_forward_rounded,
+                              key: ValueKey(_target.name),
+                              size: 180,
+                              color: scheme.primary,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      FilledButton(
-                        onPressed: () => _choose(SideChoice.left),
-                        style: FilledButton.styleFrom(backgroundColor: Colors.white),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Text('LEFT', style: TextStyle(color: Colors.black87, fontSize: 20, fontWeight: FontWeight.w700)),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        FilledButton(
+                          onPressed: () => _choose(SideChoice.left),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: scheme.primary,
+                            foregroundColor: scheme.onPrimary,
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Text(
+                              'LEFT',
+                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        onPressed: () => _choose(SideChoice.right),
-                        style: FilledButton.styleFrom(backgroundColor: Colors.white),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Text('RIGHT', style: TextStyle(color: Colors.black87, fontSize: 20, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: () => _choose(SideChoice.right),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: scheme.secondary,
+                            foregroundColor: scheme.onSecondary,
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Text(
+                              'RIGHT',
+                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
+            Positioned.fill(child: ThemeEffectLayer(theme: widget.theme)),
             IgnorePointer(
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 90),
@@ -1408,9 +2471,10 @@ class _ArrowRushScreenState extends State<ArrowRushScreen> {
   }
 
   Widget _chip(String label, String value) {
+    final scheme = Theme.of(context).colorScheme;
     return Chip(
       label: Text('$label: $value'),
-      backgroundColor: Colors.white,
+      backgroundColor: scheme.secondary.withValues(alpha: 0.14),
       side: BorderSide.none,
     );
   }
