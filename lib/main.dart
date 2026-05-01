@@ -27,6 +27,9 @@ TextStyle emojiGlyphStyle(double fontSize, {double height = 1.0}) {
 }
 
 void main() {
+  // Lets plugins (e.g. shared_preferences) safely use platform channels before the first frame.
+  // Avoids "flutter/lifecycle channel was discarded" when listeners are not registered yet.
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const LeftRightApp());
 }
 
@@ -110,27 +113,42 @@ enum ThemeVisualEffect {
 }
 
 class AppThemes {
+  /// Unlock strip order (left → right). **Jungle** then **Candy**, then Space / Galaxy Pink.
   static const List<AppTheme> all = [
     AppTheme(
       name: 'Default',
-      icon: Icons.palette_outlined,
+      icon: Icons.palette_rounded,
       seedColor: Color(0xFF9CA3AF),
       background: [Color(0xFFE4E4E7), Color(0xFFF4F4F5)],
       effect: ThemeVisualEffect.none,
     ),
     AppTheme(
+      name: 'Ice',
+      icon: Icons.cloudy_snowing,
+      seedColor: Color(0xFF0EA5E9),
+      background: [Color(0xFFEFF6FF), Color(0xFFE0F2FE)],
+      effect: ThemeVisualEffect.snowfall,
+    ),
+    AppTheme(
+      name: 'Sunset',
+      icon: Icons.wb_twilight_rounded,
+      seedColor: Color(0xFFF97316),
+      background: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
+      effect: ThemeVisualEffect.sunsetOrbs,
+    ),
+    AppTheme(
+      name: 'Ocean',
+      icon: Icons.water_rounded,
+      seedColor: Color(0xFF06B6D4),
+      background: [Color(0xFFE0F2FE), Color(0xFFECFEFF)],
+      effect: ThemeVisualEffect.oceanWave,
+    ),
+    AppTheme(
       name: 'Neon Pop',
-      icon: Icons.flash_on_rounded,
+      icon: Icons.electric_bolt_rounded,
       seedColor: Color(0xFF3B82F6),
       background: [Color(0xFFEEF2FF), Color(0xFFFFF1F2)],
       effect: ThemeVisualEffect.neonPulse,
-    ),
-    AppTheme(
-      name: 'Space',
-      icon: Icons.rocket_launch_rounded,
-      seedColor: Color(0xFF7C3AED),
-      background: [Color(0xFF0B102A), Color(0xFF1B2A6B)],
-      effect: ThemeVisualEffect.starfield,
     ),
     AppTheme(
       name: 'Jungle',
@@ -147,18 +165,11 @@ class AppThemes {
       effect: ThemeVisualEffect.candyBubbles,
     ),
     AppTheme(
-      name: 'Ocean',
-      icon: Icons.waves_rounded,
-      seedColor: Color(0xFF06B6D4),
-      background: [Color(0xFFE0F2FE), Color(0xFFECFEFF)],
-      effect: ThemeVisualEffect.oceanWave,
-    ),
-    AppTheme(
-      name: 'Sunset',
-      icon: Icons.wb_sunny_rounded,
-      seedColor: Color(0xFFF97316),
-      background: [Color(0xFFFFF7ED), Color(0xFFFFEDD5)],
-      effect: ThemeVisualEffect.sunsetOrbs,
+      name: 'Space',
+      icon: Icons.rocket_launch_rounded,
+      seedColor: Color(0xFF7C3AED),
+      background: [Color(0xFF0B102A), Color(0xFF1B2A6B)],
+      effect: ThemeVisualEffect.starfield,
     ),
     AppTheme(
       name: 'Galaxy Pink',
@@ -166,13 +177,6 @@ class AppThemes {
       seedColor: Color(0xFFDB2777),
       background: [Color(0xFF1F1147), Color(0xFF3A0A3A)],
       effect: ThemeVisualEffect.galaxySpiral,
-    ),
-    AppTheme(
-      name: 'Ice',
-      icon: Icons.ac_unit_rounded,
-      seedColor: Color(0xFF0EA5E9),
-      background: [Color(0xFFEFF6FF), Color(0xFFE0F2FE)],
-      effect: ThemeVisualEffect.snowfall,
     ),
   ];
 }
@@ -341,6 +345,48 @@ class SessionStats {
   static const _unlockedThemesKey = 'unlocked_themes';
   static const _selectedThemeKey = 'selected_theme';
   static const _statsV2Key = 'stats_v2_default_theme';
+  static const _themeOrderV3Key = 'theme_order_v3_galaxy_last';
+  static const _themeOrderV4Key = 'theme_order_v4_ice_sunset_strip';
+  static const _themeOrderV5Key = 'theme_order_v5_jungle_before_candy';
+
+  /// Indices before [AppThemes] put Space & Galaxy Pink at the end (for prefs migration).
+  static const List<String> _themeNamesBeforeOrderV3 = [
+    'Default',
+    'Neon Pop',
+    'Space',
+    'Jungle',
+    'Candy',
+    'Ocean',
+    'Sunset',
+    'Galaxy Pink',
+    'Ice',
+  ];
+
+  /// Order immediately before v4 (Ice after Default, Jungle before Space/Galaxy).
+  static const List<String> _themeNamesBeforeOrderV4 = [
+    'Default',
+    'Neon Pop',
+    'Jungle',
+    'Candy',
+    'Ocean',
+    'Sunset',
+    'Ice',
+    'Space',
+    'Galaxy Pink',
+  ];
+
+  /// Order before Jungle / Candy swap (Candy was immediately before Jungle).
+  static const List<String> _themeNamesBeforeOrderV5 = [
+    'Default',
+    'Ice',
+    'Sunset',
+    'Ocean',
+    'Neon Pop',
+    'Candy',
+    'Jungle',
+    'Space',
+    'Galaxy Pink',
+  ];
 
   static const _devActiveKey = 'dev_mode_active';
   static const _devBakBest = 'dev_bak_best_score';
@@ -370,6 +416,150 @@ class SessionStats {
       await prefs.setInt(_selectedThemeKey, nsel);
     }
     await prefs.setBool(_statsV2Key, true);
+  }
+
+  static Future<void> _migrateThemeOrderV3IfNeeded(SharedPreferences prefs) async {
+    if (prefs.getBool(_themeOrderV3Key) ?? false) return;
+
+    int newIndexForName(String name) {
+      final i = AppThemes.all.indexWhere((t) => t.name == name);
+      return i >= 0 ? i : 0;
+    }
+
+    String nameForOldIndex(int oldIdx) {
+      if (oldIdx < 0 || oldIdx >= _themeNamesBeforeOrderV3.length) {
+        return AppThemes.all.first.name;
+      }
+      return _themeNamesBeforeOrderV3[oldIdx];
+    }
+
+    int remapOldIndex(int oldIdx) => newIndexForName(nameForOldIndex(oldIdx));
+
+    if (prefs.containsKey(_selectedThemeKey)) {
+      final oldS = prefs.getInt(_selectedThemeKey) ?? 0;
+      await prefs.setInt(_selectedThemeKey, remapOldIndex(oldS));
+    }
+
+    final oldU = prefs.getInt(_unlockedThemesKey) ?? 1;
+    var newU = 1;
+    for (var oldIdx = 0;
+        oldIdx < oldU && oldIdx < _themeNamesBeforeOrderV3.length;
+        oldIdx++) {
+      newU = max(newU, remapOldIndex(oldIdx) + 1);
+    }
+    await prefs.setInt(_unlockedThemesKey, min(newU, AppThemes.all.length));
+
+    if (prefs.containsKey(_devBakSel)) {
+      await prefs.setInt(_devBakSel, remapOldIndex(prefs.getInt(_devBakSel) ?? 0));
+    }
+    if (prefs.containsKey(_devBakUnlocked)) {
+      final oldBU = prefs.getInt(_devBakUnlocked) ?? 1;
+      var newBU = 1;
+      for (var oldIdx = 0;
+          oldIdx < oldBU && oldIdx < _themeNamesBeforeOrderV3.length;
+          oldIdx++) {
+        newBU = max(newBU, remapOldIndex(oldIdx) + 1);
+      }
+      await prefs.setInt(_devBakUnlocked, min(newBU, AppThemes.all.length));
+    }
+
+    await prefs.setBool(_themeOrderV3Key, true);
+  }
+
+  static Future<void> _migrateThemeOrderV4IfNeeded(SharedPreferences prefs) async {
+    if (prefs.getBool(_themeOrderV4Key) ?? false) return;
+
+    int newIndexForName(String name) {
+      final i = AppThemes.all.indexWhere((t) => t.name == name);
+      return i >= 0 ? i : 0;
+    }
+
+    String nameForOldIndex(int oldIdx) {
+      if (oldIdx < 0 || oldIdx >= _themeNamesBeforeOrderV4.length) {
+        return AppThemes.all.first.name;
+      }
+      return _themeNamesBeforeOrderV4[oldIdx];
+    }
+
+    int remapOldIndex(int oldIdx) => newIndexForName(nameForOldIndex(oldIdx));
+
+    if (prefs.containsKey(_selectedThemeKey)) {
+      final oldS = prefs.getInt(_selectedThemeKey) ?? 0;
+      await prefs.setInt(_selectedThemeKey, remapOldIndex(oldS));
+    }
+
+    final oldU = prefs.getInt(_unlockedThemesKey) ?? 1;
+    var newU = 1;
+    for (var oldIdx = 0;
+        oldIdx < oldU && oldIdx < _themeNamesBeforeOrderV4.length;
+        oldIdx++) {
+      newU = max(newU, remapOldIndex(oldIdx) + 1);
+    }
+    await prefs.setInt(_unlockedThemesKey, min(newU, AppThemes.all.length));
+
+    if (prefs.containsKey(_devBakSel)) {
+      await prefs.setInt(_devBakSel, remapOldIndex(prefs.getInt(_devBakSel) ?? 0));
+    }
+    if (prefs.containsKey(_devBakUnlocked)) {
+      final oldBU = prefs.getInt(_devBakUnlocked) ?? 1;
+      var newBU = 1;
+      for (var oldIdx = 0;
+          oldIdx < oldBU && oldIdx < _themeNamesBeforeOrderV4.length;
+          oldIdx++) {
+        newBU = max(newBU, remapOldIndex(oldIdx) + 1);
+      }
+      await prefs.setInt(_devBakUnlocked, min(newBU, AppThemes.all.length));
+    }
+
+    await prefs.setBool(_themeOrderV4Key, true);
+  }
+
+  static Future<void> _migrateThemeOrderV5IfNeeded(SharedPreferences prefs) async {
+    if (prefs.getBool(_themeOrderV5Key) ?? false) return;
+
+    int newIndexForName(String name) {
+      final i = AppThemes.all.indexWhere((t) => t.name == name);
+      return i >= 0 ? i : 0;
+    }
+
+    String nameForOldIndex(int oldIdx) {
+      if (oldIdx < 0 || oldIdx >= _themeNamesBeforeOrderV5.length) {
+        return AppThemes.all.first.name;
+      }
+      return _themeNamesBeforeOrderV5[oldIdx];
+    }
+
+    int remapOldIndex(int oldIdx) => newIndexForName(nameForOldIndex(oldIdx));
+
+    if (prefs.containsKey(_selectedThemeKey)) {
+      final oldS = prefs.getInt(_selectedThemeKey) ?? 0;
+      await prefs.setInt(_selectedThemeKey, remapOldIndex(oldS));
+    }
+
+    final oldU = prefs.getInt(_unlockedThemesKey) ?? 1;
+    var newU = 1;
+    for (var oldIdx = 0;
+        oldIdx < oldU && oldIdx < _themeNamesBeforeOrderV5.length;
+        oldIdx++) {
+      newU = max(newU, remapOldIndex(oldIdx) + 1);
+    }
+    await prefs.setInt(_unlockedThemesKey, min(newU, AppThemes.all.length));
+
+    if (prefs.containsKey(_devBakSel)) {
+      await prefs.setInt(_devBakSel, remapOldIndex(prefs.getInt(_devBakSel) ?? 0));
+    }
+    if (prefs.containsKey(_devBakUnlocked)) {
+      final oldBU = prefs.getInt(_devBakUnlocked) ?? 1;
+      var newBU = 1;
+      for (var oldIdx = 0;
+          oldIdx < oldBU && oldIdx < _themeNamesBeforeOrderV5.length;
+          oldIdx++) {
+        newBU = max(newBU, remapOldIndex(oldIdx) + 1);
+      }
+      await prefs.setInt(_devBakUnlocked, min(newBU, AppThemes.all.length));
+    }
+
+    await prefs.setBool(_themeOrderV5Key, true);
   }
 
   static Future<bool> isDevModeActive() async {
@@ -428,6 +618,9 @@ class SessionStats {
   static Future<SessionStats> load() async {
     final prefs = await SharedPreferences.getInstance();
     await _migrateV2IfNeeded(prefs);
+    await _migrateThemeOrderV3IfNeeded(prefs);
+    await _migrateThemeOrderV4IfNeeded(prefs);
+    await _migrateThemeOrderV5IfNeeded(prefs);
 
     var u = prefs.getInt(_unlockedThemesKey) ?? 1;
     var s = prefs.getInt(_selectedThemeKey) ?? 0;
@@ -1447,7 +1640,7 @@ class _ObjectSideSprintScreenState extends State<ObjectSideSprintScreen> {
   }
 }
 
-/// Background motion per theme. Floating layers use **at most two** icons each, strictly on-theme.
+/// Full-screen floating glyphs: on-theme [iconPool] only, with a gentle “fall + sway” path.
 class ThemeEffectLayer extends StatelessWidget {
   const ThemeEffectLayer({super.key, required this.theme});
 
@@ -1458,27 +1651,39 @@ class ThemeEffectLayer extends StatelessWidget {
     switch (theme.effect) {
       case ThemeVisualEffect.none:
         return FloatingIconBackground(
-          iconPool: const [Icons.palette_outlined, Icons.tune_rounded],
+          iconPool: const [
+            Icons.palette_rounded,
+            Icons.tune_rounded,
+            Icons.brush_rounded,
+            Icons.interests_rounded,
+          ],
           tint: const Color(0xFF71717A),
-          count: 14,
-          alpha: 0.085,
-          speedMin: 0.08,
-          speedMax: 0.35,
-          drift: 0.07,
-          minGlyphSize: 12,
-          maxGlyphSize: 32,
+          count: 18,
+          alpha: 0.082,
+          speedMin: 0.07,
+          speedMax: 0.32,
+          swayCyclesPerPass: 2.2,
+          horizontalSway: 0.09,
+          minGlyphSize: 11,
+          maxGlyphSize: 30,
         );
       case ThemeVisualEffect.neonPulse:
         return FloatingIconBackground(
-          iconPool: const [Icons.flash_on_rounded, Icons.bolt_rounded],
+          iconPool: const [
+            Icons.electric_bolt_rounded,
+            Icons.bolt_rounded,
+            Icons.offline_bolt_rounded,
+            Icons.flash_on_rounded,
+          ],
           tint: theme.seedColor,
-          count: 16,
-          alpha: 0.11,
-          speedMin: 0.1,
-          speedMax: 0.45,
-          drift: 0.1,
-          minGlyphSize: 14,
-          maxGlyphSize: 34,
+          count: 20,
+          alpha: 0.1,
+          speedMin: 0.14,
+          speedMax: 0.52,
+          swayCyclesPerPass: 3.2,
+          horizontalSway: 0.07,
+          minGlyphSize: 13,
+          maxGlyphSize: 32,
         );
       case ThemeVisualEffect.starfield:
         return Stack(
@@ -1486,29 +1691,41 @@ class ThemeEffectLayer extends StatelessWidget {
           children: [
             TwinkleDotsBackground(tint: theme.seedColor.withValues(alpha: 0.95)),
             FloatingIconBackground(
-              iconPool: const [Icons.rocket_launch_rounded, Icons.star_rounded],
+              iconPool: const [
+                Icons.rocket_launch_rounded,
+                Icons.star_rounded,
+                Icons.satellite_alt_rounded,
+                Icons.public_rounded,
+              ],
               tint: const Color(0xFFC4B5FD),
-              count: 14,
-              alpha: 0.12,
-              speedMin: 0.06,
-              speedMax: 0.28,
-              drift: 0.1,
-              minGlyphSize: 14,
-              maxGlyphSize: 36,
+              count: 18,
+              alpha: 0.11,
+              speedMin: 0.05,
+              speedMax: 0.26,
+              swayCyclesPerPass: 1.8,
+              horizontalSway: 0.1,
+              minGlyphSize: 13,
+              maxGlyphSize: 34,
             ),
           ],
         );
       case ThemeVisualEffect.jungleDrift:
         return FloatingIconBackground(
-          iconPool: const [Icons.park_rounded, Icons.eco_rounded],
+          iconPool: const [
+            Icons.forest_rounded,
+            Icons.eco_rounded,
+            Icons.grass_rounded,
+            Icons.local_florist_rounded,
+          ],
           tint: const Color(0xFF0F6A3A),
-          count: 14,
-          alpha: 0.1,
-          speedMin: 0.06,
-          speedMax: 0.32,
-          drift: 0.08,
-          minGlyphSize: 14,
-          maxGlyphSize: 36,
+          count: 20,
+          alpha: 0.095,
+          speedMin: 0.04,
+          speedMax: 0.22,
+          swayCyclesPerPass: 2.6,
+          horizontalSway: 0.12,
+          minGlyphSize: 13,
+          maxGlyphSize: 34,
         );
       case ThemeVisualEffect.candyBubbles:
         return Stack(
@@ -1519,15 +1736,21 @@ class ThemeEffectLayer extends StatelessWidget {
               tint: Color.lerp(theme.seedColor, const Color(0xFFFBBF24), 0.35)!,
             ),
             FloatingIconBackground(
-              iconPool: const [Icons.cake_rounded, Icons.icecream_rounded],
+              iconPool: const [
+                Icons.cake_rounded,
+                Icons.icecream_rounded,
+                Icons.cookie_rounded,
+                Icons.emoji_food_beverage_rounded,
+              ],
               tint: theme.seedColor,
-              count: 14,
-              alpha: 0.12,
-              speedMin: 0.1,
-              speedMax: 0.4,
-              drift: 0.12,
-              minGlyphSize: 14,
-              maxGlyphSize: 32,
+              count: 20,
+              alpha: 0.11,
+              speedMin: 0.08,
+              speedMax: 0.34,
+              swayCyclesPerPass: 2.4,
+              horizontalSway: 0.11,
+              minGlyphSize: 13,
+              maxGlyphSize: 30,
             ),
           ],
         );
@@ -1537,29 +1760,41 @@ class ThemeEffectLayer extends StatelessWidget {
           children: [
             WaveBandsBackground(tint: theme.seedColor),
             FloatingIconBackground(
-              iconPool: const [Icons.waves_rounded, Icons.water_drop_rounded],
+              iconPool: const [
+                Icons.waves_rounded,
+                Icons.water_rounded,
+                Icons.water_drop_rounded,
+                Icons.scuba_diving_rounded,
+              ],
               tint: theme.seedColor,
-              count: 16,
-              alpha: 0.12,
-              speedMin: 0.08,
-              speedMax: 0.4,
-              drift: 0.11,
+              count: 20,
+              alpha: 0.11,
+              speedMin: 0.07,
+              speedMax: 0.36,
+              swayCyclesPerPass: 2.0,
+              horizontalSway: 0.1,
               minGlyphSize: 12,
-              maxGlyphSize: 34,
+              maxGlyphSize: 32,
             ),
           ],
         );
       case ThemeVisualEffect.sunsetOrbs:
         return FloatingIconBackground(
-          iconPool: const [Icons.wb_sunny_rounded, Icons.wb_twilight_rounded],
+          iconPool: const [
+            Icons.wb_twilight_rounded,
+            Icons.wb_sunny_rounded,
+            Icons.cloud_rounded,
+            Icons.flare_rounded,
+          ],
           tint: const Color(0xFFE76F51),
-          count: 14,
-          alpha: 0.1,
-          speedMin: 0.06,
-          speedMax: 0.3,
-          drift: 0.12,
-          minGlyphSize: 14,
-          maxGlyphSize: 36,
+          count: 18,
+          alpha: 0.095,
+          speedMin: 0.05,
+          speedMax: 0.28,
+          swayCyclesPerPass: 2.3,
+          horizontalSway: 0.1,
+          minGlyphSize: 13,
+          maxGlyphSize: 34,
         );
       case ThemeVisualEffect.galaxySpiral:
         return Stack(
@@ -1567,29 +1802,41 @@ class ThemeEffectLayer extends StatelessWidget {
           children: [
             SpiralSparkleBackground(tint: theme.seedColor),
             FloatingIconBackground(
-              iconPool: const [Icons.star_rounded, Icons.auto_awesome_rounded],
+              iconPool: const [
+                Icons.star_rounded,
+                Icons.auto_awesome_rounded,
+                Icons.star_border_rounded,
+                Icons.flare_rounded,
+              ],
               tint: const Color(0xFFF472B6),
-              count: 14,
-              alpha: 0.1,
-              speedMin: 0.06,
-              speedMax: 0.35,
-              drift: 0.12,
-              minGlyphSize: 12,
-              maxGlyphSize: 32,
+              count: 20,
+              alpha: 0.095,
+              speedMin: 0.05,
+              speedMax: 0.3,
+              swayCyclesPerPass: 2.8,
+              horizontalSway: 0.11,
+              minGlyphSize: 11,
+              maxGlyphSize: 30,
             ),
           ],
         );
       case ThemeVisualEffect.snowfall:
         return FloatingIconBackground(
-          iconPool: const [Icons.ac_unit_rounded, Icons.cloud_rounded],
+          iconPool: const [
+            Icons.snowing,
+            Icons.cloudy_snowing,
+            Icons.severe_cold_rounded,
+            Icons.cloud_rounded,
+          ],
           tint: const Color(0xFF38BDF8),
-          count: 14,
-          alpha: 0.11,
-          speedMin: 0.08,
-          speedMax: 0.35,
-          drift: 0.06,
-          minGlyphSize: 12,
-          maxGlyphSize: 32,
+          count: 22,
+          alpha: 0.1,
+          speedMin: 0.05,
+          speedMax: 0.22,
+          swayCyclesPerPass: 3.5,
+          horizontalSway: 0.13,
+          minGlyphSize: 11,
+          maxGlyphSize: 28,
         );
     }
   }
@@ -1604,7 +1851,10 @@ class FloatingIconBackground extends StatefulWidget {
     this.alpha = 0.10,
     this.speedMin = 0.2,
     this.speedMax = 0.8,
-    this.drift = 0.10,
+    /// Horizontal oscillations while drifting downward (higher = busier zig-zag).
+    this.swayCyclesPerPass = 2.5,
+    /// Max horizontal offset as a fraction of screen width (0.08 ≈ 8%).
+    this.horizontalSway = 0.09,
     this.minGlyphSize = 14,
     this.maxGlyphSize = 40,
   });
@@ -1615,7 +1865,8 @@ class FloatingIconBackground extends StatefulWidget {
   final double alpha;
   final double speedMin;
   final double speedMax;
-  final double drift;
+  final double swayCyclesPerPass;
+  final double horizontalSway;
   final double minGlyphSize;
   final double maxGlyphSize;
 
@@ -1627,7 +1878,7 @@ class _FloatingIconBackgroundState extends State<FloatingIconBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   final Random _rand = Random();
-  late final List<_Floaty> _floaties;
+  late List<_Floaty> _floaties;
 
   @override
   void initState() {
@@ -1635,17 +1886,48 @@ class _FloatingIconBackgroundState extends State<FloatingIconBackground>
     _controller =
         AnimationController(vsync: this, duration: const Duration(seconds: 14))
           ..repeat();
+    _rebuildFloaties();
+  }
 
+  /// Flutter reuses this [State] when switching themes (same widget type + key).
+  /// Without this, particles keep the **previous** theme’s icons (e.g. Default palette on Ice).
+  @override
+  void didUpdateWidget(covariant FloatingIconBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_sameParticleConfig(oldWidget, widget)) {
+      _rebuildFloaties();
+    }
+  }
+
+  bool _sameParticleConfig(FloatingIconBackground a, FloatingIconBackground b) {
+    if (a.count != b.count ||
+        a.speedMin != b.speedMin ||
+        a.speedMax != b.speedMax ||
+        a.minGlyphSize != b.minGlyphSize ||
+        a.maxGlyphSize != b.maxGlyphSize ||
+        a.horizontalSway != b.horizontalSway ||
+        a.swayCyclesPerPass != b.swayCyclesPerPass ||
+        a.iconPool.length != b.iconPool.length) {
+      return false;
+    }
+    for (var i = 0; i < a.iconPool.length; i++) {
+      if (a.iconPool[i].codePoint != b.iconPool[i].codePoint) return false;
+    }
+    return true;
+  }
+
+  void _rebuildFloaties() {
     final sizeSpan = max(4.0, widget.maxGlyphSize - widget.minGlyphSize);
+    final n = max(1, widget.iconPool.length);
     _floaties = List.generate(widget.count, (i) {
       return _Floaty(
-        icon: widget.iconPool[_rand.nextInt(widget.iconPool.length)],
+        icon: widget.iconPool[_rand.nextInt(n)],
         x: _rand.nextDouble(),
         y: _rand.nextDouble(),
         size: widget.minGlyphSize + _rand.nextDouble() * sizeSpan,
         speed: widget.speedMin + _rand.nextDouble() * (widget.speedMax - widget.speedMin),
-        drift: (_rand.nextDouble() - 0.5) * widget.drift,
-        phase: _rand.nextDouble(),
+        swayAmp: widget.horizontalSway * (0.45 + _rand.nextDouble() * 0.55),
+        phase: _rand.nextDouble() * pi * 2,
       );
     });
   }
@@ -1668,6 +1950,7 @@ class _FloatingIconBackgroundState extends State<FloatingIconBackground>
               t: _controller.value,
               tint: widget.tint,
               alpha: widget.alpha,
+              swayCyclesPerPass: widget.swayCyclesPerPass,
             ),
           );
         },
@@ -1683,7 +1966,7 @@ class _Floaty {
     required this.y,
     required this.size,
     required this.speed,
-    required this.drift,
+    required this.swayAmp,
     required this.phase,
   });
 
@@ -1692,7 +1975,7 @@ class _Floaty {
   final double y;
   final double size;
   final double speed;
-  final double drift;
+  final double swayAmp;
   final double phase;
 }
 
@@ -1702,18 +1985,24 @@ class _FloatingIconPainter extends CustomPainter {
     required this.t,
     required this.tint,
     required this.alpha,
+    required this.swayCyclesPerPass,
   });
 
   final List<_Floaty> floaties;
   final double t;
   final Color tint;
   final double alpha;
+  final double swayCyclesPerPass;
 
   @override
   void paint(Canvas canvas, Size size) {
     for (final f in floaties) {
-      final dy = (f.y + t * f.speed) % 1.0;
-      final dx = (f.x + sin((t + f.phase) * pi * 2) * f.drift) % 1.0;
+      final p = (f.y + t * f.speed) % 1.0;
+      final dy = p;
+      final sway =
+          sin(p * 2 * pi * swayCyclesPerPass + f.phase) * f.swayAmp;
+      var dx = f.x + sway;
+      dx = (dx % 1.0 + 1.0) % 1.0;
 
       final offset = Offset(dx * size.width, dy * size.height);
       final tp = TextPainter(
@@ -1735,7 +2024,9 @@ class _FloatingIconPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FloatingIconPainter oldDelegate) {
-    return oldDelegate.t != t || oldDelegate.tint != tint;
+    return oldDelegate.t != t ||
+        oldDelegate.tint != tint ||
+        oldDelegate.swayCyclesPerPass != swayCyclesPerPass;
   }
 }
 
